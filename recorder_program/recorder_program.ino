@@ -20,12 +20,13 @@
  |                                                           |
  *-----------------------------------------------------------*/
 
-#include <SD.h>
-#include <configMS.h>
+//#include <SD.h>
+//#include <configMS.h>
 
 // LED connection pin numbers: digital output
 const int FileLED = 13;
 const int RecordLED = 12;
+const int PlayLED = 11;
 // Speaker: analog data written as PWM output 
 const int SpeakerPin = 10;
 // Button pins: digital input, debounced by ISR
@@ -39,10 +40,6 @@ volatile int BufferArray = 0;
 const int PLAY = 0xFFFF;
 const int RECORD = 0xAAAA;
 const int DELETE = 0x5555;
-// Nice constants
-const int PLAY = 3;
-const int RECORD = 2;
-const int DELETE = 1;
 // State variables
 bool haveFile = true; 
 bool isPlaying = false;
@@ -60,8 +57,8 @@ void buttonISR() {
   //  get lowest two bits of the associated
   //  32-bit (or however long ints are) condition. 
   if (digitalRead(PlayButton)) latestButton = PLAY & 3; 
-  else if (digitalRead(RecordButton)) latestButton = RECORD & 2;
-  else if (digitalRead(DeleteButton)) latestButton = DELETE & 1;
+  else if (digitalRead(RecordButton)) latestButton = RECORD & 3;
+  else if (digitalRead(DeleteButton)) latestButton = DELETE & 3;
   else latestButton = 0;
   // Shift in that binary value
   BufferArray = (BufferArray << 2) | latestButton;
@@ -103,7 +100,7 @@ void setup() {
 // We check if the button was pressed by
 //  seeing if the whole buffer if full of
 //  that button's 2-bit number.
-bool isPressed(button) {
+bool isPressed(int button) {
   if (BufferArray == button) {
     BufferArray = 0;
     return true;
@@ -124,7 +121,7 @@ void loop() {
       }
       digitalWrite(PlayLED, LOW); // PlayLED off
     } else {
-      Serial.print("NO FILE");
+      Serial.print("NO FILE TO PLAY");
       // CONTINUE
     }
   } else if (isPressed(RECORD)) {
@@ -152,10 +149,12 @@ void loop() {
       haveFile = false;
       digitalWrite(FileLED, LOW); // FileLED off
     } else {
+      Serial.print("NO FILE TO DELETE");
       // CONTINUE
     }
   } else {
     // No buttons were pressed. GREAT!
+    Serial.print("No buttons pressed...");
     // CONTINUE
   }
   delay(100);
