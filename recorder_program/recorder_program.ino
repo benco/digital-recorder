@@ -23,9 +23,9 @@
 //#include <configMS.h>
 
 // LED connection pin numbers: digital output
-const int FileLED = 13;
-const int RecordLED = 12;
-const int PlayLED = 11;
+const int FileLED = 3;
+const int RecordLED = 9; //9 works fine
+const int PlayLED = 10;
 // Speaker: analog data written as PWM output 
 const int SpeakerPin = 10;
 // Button pins: digital input, debounced by ISR
@@ -43,13 +43,9 @@ const int DELETE = 0x5555;
 bool haveFile = true; 
 bool isPlaying = false;
 bool isRecording = false;
-<<<<<<< HEAD
 
-int DERP = 0;
-=======
 bool quitRecord = false;
 bool quitPlaying = false;
->>>>>>> a189d2387fa9482aaae03f27d9f4e4a2f9a5d257
 
 // When any button is pressed, 2 go low and this
 //  method will continually run until all buttons
@@ -67,7 +63,6 @@ void buttonISR() {
   else latestButton = 0;
   // Shift in that binary value
   BufferArray = (BufferArray << 2) | latestButton;
-  DERP = latestButton;
 }
 
 
@@ -78,6 +73,8 @@ void setup() {
   // LED controls & turn them all off (assume active high)
   pinMode(FileLED, OUTPUT); 
   pinMode(RecordLED, OUTPUT); 
+  pinMode(PlayLED, OUTPUT);
+  digitalWrite(PlayLED, LOW);
   digitalWrite(FileLED, LOW);
   digitalWrite(RecordLED, LOW);
 
@@ -123,11 +120,6 @@ void loop() {
       isPlaying = true;
       quitPlaying = false;
       while (isPlaying) {
-<<<<<<< HEAD
-        // play a little
-        isPlaying = !isPressed(PLAY);
-        Serial.println("playing...");
-=======
         if (quitPlaying) {
           Serial.print("Press again to quit!");
           isPlaying = !isPressed(PLAY); //stays true until released
@@ -135,7 +127,6 @@ void loop() {
           Serial.print("playing...");
           quitPlaying = isPressed(PLAY); //stays true until pressed
         }
->>>>>>> a189d2387fa9482aaae03f27d9f4e4a2f9a5d257
       }
       digitalWrite(PlayLED, LOW); // PlayLED off
     } else {
@@ -157,15 +148,10 @@ void loop() {
   } else if (isPressed(RECORD)) {
     while (isPressed(RECORD)) {} //Will start recodring when button is released
     if (!haveFile) {
-      digitalWrite(RecordLED, LOW); // RecordLED on (to Ben: Shouldn't be HIGHT?)
+      digitalWrite(RecordLED, HIGH); // RecordLED on (to Ben: Shouldn't be HIGHT?)
       isRecording = true;
       quitRecord = false;
       while (isRecording) {
-<<<<<<< HEAD
-        // record a little (MESHAL)
-        isRecording = !isPressed(RECORD);
-        Serial.println("recording...");
-=======
         if (quitRecord) {
           Serial.print("Press again to quit!");
           isRecording = !isPressed(RECORD); //stays true until pressed
@@ -173,7 +159,6 @@ void loop() {
         Serial.print("recording...");
         quitRecord = isPressed(RECORD);
         }
->>>>>>> a189d2387fa9482aaae03f27d9f4e4a2f9a5d257
       }
       digitalWrite(RecordLED, LOW); // RecordLED off
       haveFile = true;
@@ -181,10 +166,6 @@ void loop() {
       // create file...?
       // CONTINUE
     } else {
-<<<<<<< HEAD
-      // Blink angrily (MESHAL)
-      Serial.println("WE ALREADY HAVE A FILE");
-=======
       digitalWrite(FileLED, HIGH); //Blink angirly
       delay(300);                  
       digitalWrite(FileLED, LOW); 
@@ -197,7 +178,6 @@ void loop() {
       delay(300);
       digitalWrite(FileLED, LOW); //End of blinking
       Serial.print("WE ALREADY HAVE A FILE");
->>>>>>> a189d2387fa9482aaae03f27d9f4e4a2f9a5d257
       // CONTINUE
     }
   } else if (isPressed(DELETE)) {
@@ -206,9 +186,6 @@ void loop() {
       haveFile = false;
       digitalWrite(FileLED, LOW); // FileLED off
     } else {
-<<<<<<< HEAD
-      Serial.println("NO FILE TO DELETE");
-=======
       digitalWrite(FileLED, HIGH); //Blink angirly
       delay(300);                  
       digitalWrite(FileLED, LOW); 
@@ -221,12 +198,10 @@ void loop() {
       delay(300);
       digitalWrite(FileLED, LOW); //End of blinking
       Serial.print("NO FILE TO DELETE");
->>>>>>> a189d2387fa9482aaae03f27d9f4e4a2f9a5d257
       // CONTINUE
     }
   } else {
     // No buttons were pressed. GREAT!
-    Serial.print(DERP);
     Serial.print(BufferArray);
     BufferArray = 0;
     Serial.println("No buttons pressed...");
