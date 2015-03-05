@@ -19,7 +19,6 @@
  | - Have serial messages to debug stuff                     |
  |                                                           |
  *-----------------------------------------------------------*/
-
 //#include <SD.h>
 //#include <configMS.h>
 
@@ -44,8 +43,13 @@ const int DELETE = 0x5555;
 bool haveFile = true; 
 bool isPlaying = false;
 bool isRecording = false;
+<<<<<<< HEAD
 
 int DERP = 0;
+=======
+bool quitRecord = false;
+bool quitPlaying = false;
+>>>>>>> a189d2387fa9482aaae03f27d9f4e4a2f9a5d257
 
 // When any button is pressed, 2 go low and this
 //  method will continually run until all buttons
@@ -113,27 +117,63 @@ bool isPressed(int button) {
 
 void loop() {
   if (isPressed(PLAY)) {
+    while (isPressed(PLAY)) {} //Will start playing when button released (Hanger)
     if (haveFile) {
       digitalWrite(PlayLED, HIGH); // PlayLED on
       isPlaying = true;
+      quitPlaying = false;
       while (isPlaying) {
+<<<<<<< HEAD
         // play a little
         isPlaying = !isPressed(PLAY);
         Serial.println("playing...");
+=======
+        if (quitPlaying) {
+          Serial.print("Press again to quit!");
+          isPlaying = !isPressed(PLAY); //stays true until released
+        }else{
+          Serial.print("playing...");
+          quitPlaying = isPressed(PLAY); //stays true until pressed
+        }
+>>>>>>> a189d2387fa9482aaae03f27d9f4e4a2f9a5d257
       }
       digitalWrite(PlayLED, LOW); // PlayLED off
     } else {
+      digitalWrite(PlayLED, HIGH); //Blink angirly here as well to let the user know
+      delay(300);                  //that there is no file to play, we could remove it
+      digitalWrite(PlayLED, LOW); //if we have time to use LCD
+      delay(300);
+      digitalWrite(PlayLED, HIGH);
+      delay(300);
+      digitalWrite(PlayLED, LOW);
+      delay(300);
+      digitalWrite(PlayLED, HIGH);
+      delay(300);
+      digitalWrite(PlayLED, LOW); //End of blinking
+      
       Serial.print("NO FILE TO PLAY");
       // CONTINUE
     }
   } else if (isPressed(RECORD)) {
+    while (isPressed(RECORD)) {} //Will start recodring when button is released
     if (!haveFile) {
-      digitalWrite(RecordLED, LOW); // RecordLED on
+      digitalWrite(RecordLED, LOW); // RecordLED on (to Ben: Shouldn't be HIGHT?)
       isRecording = true;
+      quitRecord = false;
       while (isRecording) {
+<<<<<<< HEAD
         // record a little (MESHAL)
         isRecording = !isPressed(RECORD);
         Serial.println("recording...");
+=======
+        if (quitRecord) {
+          Serial.print("Press again to quit!");
+          isRecording = !isPressed(RECORD); //stays true until pressed
+        } else {
+        Serial.print("recording...");
+        quitRecord = isPressed(RECORD);
+        }
+>>>>>>> a189d2387fa9482aaae03f27d9f4e4a2f9a5d257
       }
       digitalWrite(RecordLED, LOW); // RecordLED off
       haveFile = true;
@@ -141,8 +181,23 @@ void loop() {
       // create file...?
       // CONTINUE
     } else {
+<<<<<<< HEAD
       // Blink angrily (MESHAL)
       Serial.println("WE ALREADY HAVE A FILE");
+=======
+      digitalWrite(FileLED, HIGH); //Blink angirly
+      delay(300);                  
+      digitalWrite(FileLED, LOW); 
+      delay(300);
+      digitalWrite(FileLED, HIGH);
+      delay(300);
+      digitalWrite(FileLED, LOW);
+      delay(300);
+      digitalWrite(FileLED, HIGH);
+      delay(300);
+      digitalWrite(FileLED, LOW); //End of blinking
+      Serial.print("WE ALREADY HAVE A FILE");
+>>>>>>> a189d2387fa9482aaae03f27d9f4e4a2f9a5d257
       // CONTINUE
     }
   } else if (isPressed(DELETE)) {
@@ -151,7 +206,22 @@ void loop() {
       haveFile = false;
       digitalWrite(FileLED, LOW); // FileLED off
     } else {
+<<<<<<< HEAD
       Serial.println("NO FILE TO DELETE");
+=======
+      digitalWrite(FileLED, HIGH); //Blink angirly
+      delay(300);                  
+      digitalWrite(FileLED, LOW); 
+      delay(300);
+      digitalWrite(FileLED, HIGH);
+      delay(300);
+      digitalWrite(FileLED, LOW);
+      delay(300);
+      digitalWrite(FileLED, HIGH);
+      delay(300);
+      digitalWrite(FileLED, LOW); //End of blinking
+      Serial.print("NO FILE TO DELETE");
+>>>>>>> a189d2387fa9482aaae03f27d9f4e4a2f9a5d257
       // CONTINUE
     }
   } else {
