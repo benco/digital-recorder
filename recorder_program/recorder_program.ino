@@ -19,19 +19,19 @@
  | - Have serial messages to debug stuff                     |
  |                                                           |
  *-----------------------------------------------------------*/
-//#include <SD.h>
+#include <SD.h>
 //#include <configMS.h>
 
 // LED connection pin numbers: digital output
-const int FileLED = 3;
-const int RecordLED = 9; //9 works fine
-const int PlayLED = 10;
+const int FileLED = 5;
+const int RecordLED = 6; //9 works fine
+const int PlayLED = 7;
 // Speaker: analog data written as PWM output 
-const int SpeakerPin = 10;
+const int SpeakerPin = 3;
 // Button pins: digital input, debounced by ISR
-const int PlayButton = 7;
-const int RecordButton = 6;
-const int DeleteButton = 5;
+const int PlayButton = 9;
+const int RecordButton = 8;
+const int DeleteButton = 0;
 const int InterruptPin = 2;  // Triggers ISR for all buttons
 // Debouncing array
 volatile int BufferArray = 0;
@@ -43,9 +43,10 @@ const int DELETE = 0x5555;
 bool haveFile = true; 
 bool isPlaying = false;
 bool isRecording = false;
-
 bool quitRecord = false;
 bool quitPlaying = false;
+// File for reading
+File myFile;
 
 // When any button is pressed, 2 go low and this
 //  method will continually run until all buttons
@@ -77,12 +78,25 @@ void setup() {
   digitalWrite(PlayLED, LOW);
   digitalWrite(FileLED, LOW);
   digitalWrite(RecordLED, LOW);
-
   // Initialize SD shield
-  // while (don't have SD card)
-  ///  wait
-  ///  blink a light quickly
-  // Get file system access
+  if (!SD.begin(4)) {
+    Serial.println("SD init failed!!!");
+    return;
+  }
+  Serial.println("SD init done");
+  
+  // TESTING THE SD CARD ACCESS
+  myFile = SD.open("test.txt", FILE_READ);
+  if (myFile) {
+    Serial.println("Output of test.txt:");
+    while (myFile.available()) {
+      Serial.write(myFile.read());
+    }
+    myFile.close();
+  } else {
+    Serial.println("error opening file!");
+  }
+  
   // if (we have "recording.mp3")
   ///  haveFile = true
   ///  FileLED on
@@ -119,7 +133,24 @@ void loop() {
       digitalWrite(PlayLED, HIGH); // PlayLED on
       isPlaying = true;
       quitPlaying = false;
+      
+      byte data = 0;
+      myFile = SD.open("knight_rider_access.wav", FILE_READ);
+      if (myFile) {
+        for (int i=0; i<64; i++) {
+          Serial.print(myFile.read());
+        }
+        Serial.println("");
+        delay(10000);
+      } else {
+        Serial.println("WTFFFF MANNNN");
+        delay(1000);
+      }
+       
       while (isPlaying) {
+        
+        //data = myFile.read();
+        
         if (quitPlaying) {
           Serial.print("Press again to quit!");
           isPlaying = !isPressed(PLAY); //stays true until released
@@ -141,6 +172,7 @@ void loop() {
       digitalWrite(PlayLED, HIGH);
       delay(300);
       digitalWrite(PlayLED, LOW); //End of blinking
+      
       
       Serial.print("NO FILE TO PLAY");
       // CONTINUE
@@ -176,7 +208,10 @@ void loop() {
       delay(300);
       digitalWrite(FileLED, HIGH);
       delay(300);
-      digitalWrite(FileLED, LOW); //End of blinking
+      digitalWrite(FileLED, LOW); 
+      delay(300);
+      digitalWrite(FileLED, HIGH);//End of blinking
+      
       Serial.print("WE ALREADY HAVE A FILE");
       // CONTINUE
     }
@@ -196,13 +231,14 @@ void loop() {
       delay(300);
       digitalWrite(FileLED, HIGH);
       delay(300);
-      digitalWrite(FileLED, LOW); //End of blinking
+      digitalWrite(FileLED, LOW);  //End of blinking
+      
       Serial.print("NO FILE TO DELETE");
       // CONTINUE
     }
   } else {
     // No buttons were pressed. GREAT!
-    Serial.print(BufferArray);
+    //Serial.println(BufferArray);
     BufferArray = 0;
     Serial.println("No buttons pressed...");
     // CONTINUE
