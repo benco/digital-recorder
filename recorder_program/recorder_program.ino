@@ -45,6 +45,7 @@ bool haveFile = true;
 bool isPlaying = false;
 bool isRecording = false;
 
+int DERP = 0;
 
 // When any button is pressed, 2 go low and this
 //  method will continually run until all buttons
@@ -56,12 +57,13 @@ void buttonISR() {
   // Determine which button pressed, then
   //  get lowest two bits of the associated
   //  32-bit (or however long ints are) condition. 
-  if (digitalRead(PlayButton)) latestButton = PLAY & 3; 
-  else if (digitalRead(RecordButton)) latestButton = RECORD & 3;
-  else if (digitalRead(DeleteButton)) latestButton = DELETE & 3;
+  if (!digitalRead(PlayButton)) latestButton = PLAY & 3; 
+  else if (!digitalRead(RecordButton)) latestButton = RECORD & 3;
+  else if (!digitalRead(DeleteButton)) latestButton = DELETE & 3;
   else latestButton = 0;
   // Shift in that binary value
   BufferArray = (BufferArray << 2) | latestButton;
+  DERP = latestButton;
 }
 
 
@@ -101,7 +103,7 @@ void setup() {
 //  seeing if the whole buffer if full of
 //  that button's 2-bit number.
 bool isPressed(int button) {
-  if (BufferArray == button) {
+  if ((BufferArray & 0xFF00) == (button & 0xFF00)) {
     BufferArray = 0;
     return true;
   } else {
@@ -117,7 +119,7 @@ void loop() {
       while (isPlaying) {
         // play a little
         isPlaying = !isPressed(PLAY);
-        Serial.print("playing...");
+        Serial.println("playing...");
       }
       digitalWrite(PlayLED, LOW); // PlayLED off
     } else {
@@ -131,7 +133,7 @@ void loop() {
       while (isRecording) {
         // record a little (MESHAL)
         isRecording = !isPressed(RECORD);
-        Serial.print("recording...");
+        Serial.println("recording...");
       }
       digitalWrite(RecordLED, LOW); // RecordLED off
       haveFile = true;
@@ -140,7 +142,7 @@ void loop() {
       // CONTINUE
     } else {
       // Blink angrily (MESHAL)
-      Serial.print("WE ALREADY HAVE A FILE");
+      Serial.println("WE ALREADY HAVE A FILE");
       // CONTINUE
     }
   } else if (isPressed(DELETE)) {
@@ -149,13 +151,16 @@ void loop() {
       haveFile = false;
       digitalWrite(FileLED, LOW); // FileLED off
     } else {
-      Serial.print("NO FILE TO DELETE");
+      Serial.println("NO FILE TO DELETE");
       // CONTINUE
     }
   } else {
     // No buttons were pressed. GREAT!
-    Serial.print("No buttons pressed...");
+    Serial.print(DERP);
+    Serial.print(BufferArray);
+    BufferArray = 0;
+    Serial.println("No buttons pressed...");
     // CONTINUE
   }
-  delay(100);
+  //delay(100);
 }
