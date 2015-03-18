@@ -20,14 +20,18 @@
  |                                                           |
  *-----------------------------------------------------------*/
 #include <SD.h>
+#include <TimerOne.h>
 //#include <configMS.h>
 
 // LED connection pin numbers: digital output
-const int FileLED = 5;
+const int FileLED = 10;
 const int RecordLED = 6; //9 works fine
 const int PlayLED = 7;
 // Speaker: analog data written as PWM output 
-const int SpeakerPin = 3;
+//          NEW: configure digital port!
+const int APORT[] = {4, 4, 4, 4, 4, 4, 4, 4}; 
+const int SpeakerPin = 5;
+const int MicrophonePin = A0;
 // Button pins: digital input, debounced by ISR
 const int PlayButton = 9;
 const int RecordButton = 8;
@@ -111,7 +115,16 @@ void setup() {
   }
   
   // Setup speaker PWM output frequency to 31372.55
-  TCCR2B = TCCR2B & 0b11111000 | 0x01; 
+  //TCCR2B = TCCR2B & 0b11111000 | 0x01; 
+  // Setup speaker PWM output for pin 5 to 62500Hz
+  TCCR0B = TCCR0B & 0b11111000 | 0x01;
+  
+  // NEW audio handler, using Timer1
+  // 25us (40kHz)
+  Timer1.initialize(25);
+  Timer1.attachInterrupt(AudioISR);
+  Timer1.restart();
+  Timer1.stop();
   
   // if (we have "recording.mp3")
   ///  haveFile = true
@@ -128,6 +141,31 @@ void setup() {
   /// will run and check when button we have
   attachInterrupt(0, buttonISR, LOW);
   
+}
+
+volatile unsigned int buffer[256];
+byte index = 0;
+unsigned int sample = 0x0;
+
+// Runs every 25 us to put a digital sample on
+//  the digital audio output port.
+void AudioISR() {
+  if (isPlaying) {
+    sample = buffer[index];
+    index = index + 1;
+    digitalWrite(APORT[0], (sample & 0x1));
+    digitalWrite(APORT[1], (sample & 0x2));
+    digitalWrite(APORT[2], (sample & 0x4));
+    digitalWrite(APORT[3], (sample & 0x8));
+    digitalWrite(APORT[4], (sample & 0x10));
+    digitalWrite(APORT[5], (sample & 0x20));
+    digitalWrite(APORT[6], (sample & 0x40));
+    digitalWrite(APORT[7], (sample & 0x80));
+  } else {
+    sample = analogRead(MicrophonePin);
+    buffer[index] = sample;
+    index = index + 1;
+  }
 }
 
 // We check if the button was pressed by
@@ -164,7 +202,7 @@ void loop() {
       digitalWrite(PlayLED, HIGH); // PlayLED on
       isPlaying = true;
       quitPlaying = false;
-      
+      Timer1.start();
       byte data = 0;
       myFile = SD.open("sine/20000hz.wav", FILE_READ);
       //myFile = SD.open("krider.wav", FILE_READ);
@@ -214,6 +252,7 @@ void loop() {
           quitPlaying = isPressed(PLAY); //stays true until pressed
         }
       }
+      Timer1.stop();
       digitalWrite(PlayLED, LOW); // PlayLED off
     } else {
       digitalWrite(PlayLED, HIGH); //Blink angirly here as well to let the user know
