@@ -11,6 +11,7 @@
  *-----------------------------------------------------------*
  | Changelog:                                                |
  | [2/11/15] Implemented the block diagram on the drive      |
+ | [3/??/15] Added test signal output code in play block     |
  |                                                           |
  *-----------------------------------------------------------*
  | Todo:                                                     |
@@ -20,8 +21,7 @@
  |                                                           |
  *-----------------------------------------------------------*/
 #include <SD.h>
-#include <TimerOne.h>
-//#include <configMS.h>
+//#include <configMS.h> //what is this??
 
 // LED connection pin numbers: digital output
 const int FileLED = 10;
@@ -29,7 +29,7 @@ const int RecordLED = 6; //9 works fine
 const int PlayLED = 7;
 // Speaker: analog data written as PWM output 
 //          NEW: configure digital port!
-const int APORT[] = {4, 4, 4, 4, 4, 4, 4, 4}; 
+const int APORT[] = {3, 3, 3, 3, 3, 3, 3, 3}; 
 const int SpeakerPin = 5;
 const int MicrophonePin = A0;
 // Button pins: digital input, debounced by ISR
@@ -88,6 +88,7 @@ int sine[] = { 127, 134, 142, 150, 158, 166, 173, 181, 188, 195,
 void setup() {
   // Serial setup for debugging statements
   Serial.begin(9600); 
+
   // LED controls & turn them all off (assume active high)
   pinMode(FileLED, OUTPUT); 
   pinMode(RecordLED, OUTPUT); 
@@ -95,15 +96,18 @@ void setup() {
   digitalWrite(PlayLED, LOW);
   digitalWrite(FileLED, LOW);
   digitalWrite(RecordLED, LOW);
-  // Initialize SD shield
+  
+	// Initialize SD shield
+	pinMode(4, OUTPUT);
   if (!SD.begin(4)) {
     Serial.println("SD init failed!!!");
-    return;
-  }
-  Serial.println("SD init done");
+  } else {
+  	Serial.println("SD init done");
+	}
   
   // TESTING THE SD CARD ACCESS
   myFile = SD.open("test.txt", FILE_READ);
+  //myFile = SD.open("timemachine.wav", FILE_READ);
   if (myFile) {
     Serial.println("Output of test.txt:");
     while (myFile.available()) {
@@ -114,18 +118,35 @@ void setup() {
     Serial.println("error opening file!");
   }
   
-  // Setup speaker PWM output frequency to 31372.55
-  //TCCR2B = TCCR2B & 0b11111000 | 0x01; 
-  // Setup speaker PWM output for pin 5 to 62500Hz
+	//// SPEAKER SETUP ///////////////////////////////////////////////////
+	
+  // OLD Setup speaker PWM output for pin 5 to 62500Hz
   TCCR0B = TCCR0B & 0b11111000 | 0x01;
   
-  // NEW audio handler, using Timer1
-  // 25us (40kHz)
-  Timer1.initialize(25);
-  Timer1.attachInterrupt(AudioISR);
-  Timer1.restart();
-  Timer1.stop();
+	// Setup pins for DIGITAL audio port
+	for (int i=0; i<sizeof(APORT); i++) {
+		pinMode(APORT[i], OUTPUT);
+	}
+	digitalWrite(APORT[0], LOW);
+
+  // NEW audio handler using built-in support
+	cli(); // disables interrupts
+	//set timer2 interrupt at 8kHz
+	TCCR2A = 0;// set entire TCCR2A register to 0
+  TCCR2B = 0;// same for TCCR2B
+  TCNT2  = 0;//initialize counter value to 0
+  // set compare match register for 40khz increments
+  OCR2A = 49;// = (16*10^6) / (40000*8) - 1 (must be <256)
+  // turn on CTC mode
+  TCCR2A |= (1 << WGM21);
+  // Set CS21 bit for 8 prescaler
+  TCCR2B |= (1 << CS21);   
+  // enable timer compare interrupt
+  TIMSK2 |= (1 << OCIE2A);
+  sei();//enable interrupts
   
+	//////////////////////////////////////////////////////////////////////
+
   // if (we have "recording.mp3")
   ///  haveFile = true
   ///  FileLED on
@@ -147,9 +168,9 @@ volatile unsigned int buffer[256];
 byte index = 0;
 unsigned int sample = 0x0;
 
-// Runs every 25 us to put a digital sample on
-//  the digital audio output port.
-void AudioISR() {
+// AUDIO ISR, Runs every 25 us to put a digital sample on
+// the digital audio output port.
+ISR(TIMER2_COMPA_vect) {
   if (isPlaying) {
     sample = buffer[index];
     index = index + 1;
@@ -196,19 +217,24 @@ long readSample(int n, File f) {
 }
 
 void loop() {
+	Serial.print("I HAVE ENTERED THE LOOP!!!!");
   if (isPressed(PLAY)) {
     while (isPressed(PLAY)) {} //Will start playing when button released (Hanger)
     if (haveFile) {
       digitalWrite(PlayLED, HIGH); // PlayLED on
-      isPlaying = true;
+      isPlaying = false;
       quitPlaying = false;
-      Timer1.start();
+      //Timer1.start();
+
+/*
       byte data = 0;
-      myFile = SD.open("sine/20000hz.wav", FILE_READ);
+      myFile = SD.open("timemachine.wav", FILE_READ);
+      //myFile = SD.open("sine/20000hz.wav", FILE_READ);
       //myFile = SD.open("krider.wav", FILE_READ);
       //myFile = SD.open("nocomp.wav", FILE_READ);
       //myFile = SD.open("ateam.wav", FILE_READ);
       //myFile = SD.open("test.txt", FILE_READ);
+*/
       if (myFile) {
         // print out the header
         for (int i=0; i<44; i++) {
@@ -222,11 +248,19 @@ void loop() {
         
         while (myFile.available()) {
          //sample = (readSample(3, myFile) * 255) / 65536;
+/*
+				 sample = myFile.read();
          //Serial.println(sample);
+				 buffer[count] = sample;
+				 if (count == 255) isPlaying = true;
+				 count = (count + 1)%256;
          //analogWrite(SpeakerPin, sample);
+*/
          
          // SINE
-         analogWrite(SpeakerPin, sine[count]);
+         //analogWrite(SpeakerPin, sine[count]);
+				 buffer[count] = sine[count];
+				 if (count == 100) isPlaying = true;
          count = (count+1)%101;
          
          // SQUARE
@@ -252,7 +286,7 @@ void loop() {
           quitPlaying = isPressed(PLAY); //stays true until pressed
         }
       }
-      Timer1.stop();
+      //Timer1.stop();
       digitalWrite(PlayLED, LOW); // PlayLED off
     } else {
       digitalWrite(PlayLED, HIGH); //Blink angirly here as well to let the user know
