@@ -17,8 +17,8 @@
  |                                                           |
  *-----------------------------------------------------------*
  | Todo:                                                     |
- | - Read into a big-ass circular buffer from the SD card    |
- | - Maybe a structure for the circular buffer?              |
+ | - Read into a big-ass circular AUDIO_BUFFER from the SD card    |
+ | - Maybe a structure for the circular AUDIO_BUFFER?              |
  | - Reave the chaff!                                        |
  |                                                           |
  *-----------------------------------------------------------*/
@@ -72,7 +72,7 @@ void BUTTON_ISR() {
   else if (analogRead(DeleteButton)<ButtonLow) latestButton = DELETE & 3;
   else latestButton = 0;
   // Shift in that binary value
-  ButtonBuffer = (BufferArray << 2) | latestButton;
+  ButtonBuffer = (ButtonBuffer << 2) | latestButton;
 }
 
 
@@ -89,7 +89,7 @@ void setup() {
 
 	//// SPEAKER SETUP ///////////////////////////////////////////////////
 	
-  // NEW audio handler using built-in support
+  // Audio OUTPUT ISR using Timer2
 	cli(); // disables interrupts
 	TIMSK2 = 0x0;
 	//set timer2 interrupt at 8kHz
@@ -107,11 +107,29 @@ void setup() {
 	TIMSK2 = 0x0;
   sei();//enable interrupts
   
+  // Audio INPUT ISR using Timer2
+	cli(); // disables interrupts
+	TIMSK1 = 0x0;
+	//set timer1 interrupt at 8kHz
+	TCCR1A = 0;// set entire TCCR2A register to 0
+  TCCR1B = 0;// same for TCCR2B
+  TCNT1  = 0;//initialize counter value to 0
+  // set compare match register for 40khz increments
+  OCR1A = 49;// = (16*10^6) / (40000*8) - 1 (must be <256)
+  // turn on CTC mode
+  TCCR1A |= (1 << WGM11);
+  // Set CS21 bit for 8 prescaler
+  TCCR1B |= (1 << CS11);   
+  // enable timer compare interrupt
+  //TIMSK1 |= (1 << OCIE1A);
+	TIMSK1 = 0x0;
+  sei();//enable interrupts
+	
 	//////////////////////////////////////////////////////////////////////
 
 	// Initialize SD shield
-	pinMode(4, OUTPUT);
-  if (!SD.begin(4)) {
+	pinMode(8, OUTPUT);
+  if (!SD.begin(8)) {
     Serial.println("SD init failed!!!");
   } else {
   	Serial.println("SD init done");
@@ -142,8 +160,8 @@ void setup() {
   
 }
 
-//volatile unsigned int buffer[256];
-volatile unsigned int buffer[] = {
+/* TEST OUTPUT OF 40k/256 Hz SINE WAVE ****************** /
+volatile unsigned int AUDIO_BUFFER[] = {
 128, 131, 134, 137, 141, 144, 147, 150, 153, 156,
 159, 162, 165, 168, 171, 174, 177, 180, 183, 186,
 189, 191, 194, 197, 199, 202, 205, 207, 209, 212,
@@ -171,38 +189,109 @@ volatile unsigned int buffer[] = {
 82, 85, 88, 91, 94, 97, 100, 103, 106, 109,
 112, 115, 119, 122, 125, 128  
 };
-byte index = 0;
+byte INDEX_R = 0;
+/ ********************************************************/
+
+// B U F F E R /////////////////////////////////////////////////////////
+
+// Arduino has 2k SRAM for buffer! So use 1k, or 2x10
+#define AudioBufferSize 512
+unsigned char AUDIO_BUFFER[AudioBufferSize]; // Is malloc better? Maybe not
+unsigned int INDEX_W;
+bool LOOP_W;
+unsigned int INDEX_R;
+bool LOOP_R;
 unsigned int sample = 0x0;
 
-// AUDIO ISR, Runs every 25 us to put a digital sample on
+void AB_reset() {
+	INDEX_W = 0;
+	LOOP_W = false;
+	INDEX_R = 0;
+	LOOP_R = false;
+}
+
+int AB_size() {
+	if (LOOP_W == LOOP_R && INDEX_W >= INDEX_R)  {
+		return INDEX_W - INDEX_R;
+	} else if (LOOP_W != LOOP_R && INDEX_W <= INDEX_R) {
+		return INDEX_W + (AudioBufferSize - INDEX_R); 
+	} else {
+		return -1;
+	}
+}
+
+int AB_canWrite() {
+	int size = AB_size();
+	return (size >= 0) ? AudioBufferSize - size : 0;
+}
+	
+// Write n bytes from File into AudioBuffer
+int AB_writeFrom(File f, int n) {
+	if (n < AB_canWrite()) return -1;
+	if ((INDEX_W + n) >= AudioBufferSize) {
+		int r = AudioBufferSize - INDEX_W;
+		f.readBytes((char *)&AUDIO_BUFFER+INDEX_W, r);
+		INDEX_W = 0;
+		LOOP_W = !LOOP_W;
+		n = n - r;
+	}
+	f.readBytes((char *)&AUDIO_BUFFER+INDEX_W, n);
+	INDEX_W = INDEX_W + n;
+	return 0;
+}
+
+int AB_canRead() {
+	int size = AB_size();
+	return (size >= 0) ? size : 0;
+}
+
+// Read n bytes out to File from AudioBuffer
+int AB_readTo(File f, int n) {
+	if (n < AB_canRead()) return -1;
+	if ((INDEX_R + n) >= AudioBufferSize) {
+		int r = AudioBufferSize - INDEX_R;
+		f.write((char *)&AUDIO_BUFFER+INDEX_R, r);
+		INDEX_R = 0;
+		LOOP_R = !LOOP_R;
+		n = n - r;
+	}
+	f.write((char *)&AUDIO_BUFFER+INDEX_R, n);
+	INDEX_R = INDEX_R + n;
+	return 0;
+}
+
+////////////////////////////////////////////////////////////////////////
+
+// AUDIO OUTPUT ISR, Runs every 25 us to put a digital sample on
 // the digital audio output port.
 ISR(TIMER2_COMPA_vect) {
-  if (isPlaying) {
-    PORTD &= 0x04;
-    PORTD |= (buffer[index]&0xFB);
-    index = index + 1;
-  } else {
-    sample = analogRead(MicrophonePin);
-    buffer[index] = sample;
-    index = index + 1;
-  }
+  PORTD &= 0x04;
+  PORTD |= (AUDIO_BUFFER[INDEX_R]&0xFB);
+  INDEX_R = (INDEX_R + 1) % AudioBufferSize;
+}
+
+// AUDIO INPUT ISR, Runs every 25 us to put a digital sample on
+// the digital audio output port.
+ISR(TIMER1_COMPA_vect) {
+  AUDIO_BUFFER[INDEX_W] = analogRead(MicrophonePin);
+  INDEX_W = (INDEX_W + 1) % AudioBufferSize;
 }
 
 // We check if the button was pressed by
-//  seeing if the whole buffer if full of
+//  seeing if the whole AUDIO_BUFFER if full of
 //  that button's 2-bit number.
 bool isPressed(int button) {
   if ((ButtonBuffer & 0xFF00) == (button & 0xFF00)) {
     ButtonBuffer = 0;
     return true;
   } else {
-		if (ButtonBuffer != 0) Serial.println(BufferArray);
+		if (ButtonBuffer != 0) Serial.println(ButtonBuffer);
     return false;
   }
 }
 
 // ASUMPTION: b has length of >= n!
-long readSample(int n, File f) {
+long readWavSample(int n, File f) {
   unsigned long sample = 0;
   if (f.available() >= n) {
     for (int i=0; i<n; i++) {
@@ -224,24 +313,71 @@ void angryBlink(int pin, int num_blinks, bool end_state) {
 	}
 }
 
+
+// PLAY:
+// State Variables 
+#define BUF_INIT 0x0
+#define BUF_PLAY 0x1
+#define RE_BUFFR 0x2
+#define PLY_ONLY 0x3
+unsigned char play_state = 0;
+// Buffer Parameters
+#define prefAmt 64
+#define lenInit 512
+#define lenMinB 128
+
 void loop() {
 
 	// P L A Y /////////////////////////////////////////////////////////////
   if (isPressed(PLAY)) {
     while (isPressed(PLAY)) {} //Will start playing when button released (Hanger)
-    if (haveFile) {
+		myFile = SD.open("timemachine.wav", FILE_READ);
+    if (myFile && haveFile) {
       digitalWrite(ActiveLED, HIGH); // PlayLED on
       quitPlaying = false;
+			INDEX_W;
+			INDEX_R;
 
-      //Timer2.start();
-  		TIMSK2 |= (1 << OCIE2A);
-
-      while (isPlaying) {
-        
-        //data = myFile.read();
-				buffer[head]
-      	isPlaying = true;
-        
+			while (!quitPlaying) {
+				switch (play_state) {
+					case BUF_INIT:
+						if (AB_size() < lenInit && myFile.available() > 0) {
+							AB_writeFrom(myFile, prefAmt);
+						} else {
+							play_state = BUF_PLAY;
+  						TIMSK2 |= (1 << OCIE2A); // Start output
+							isPlaying = true;
+						}
+						break;
+					case BUF_PLAY:
+						if (AB_size() > 0 && myFile.available() > 0) {
+							AB_writeFrom(myFile, prefAmt);
+						} else if (myFile.available() > 0) {
+							play_state = RE_BUFFR;
+							TIMSK2 = 0; // Stop output
+							isPlaying = false;
+						} else {
+							play_state = PLY_ONLY;
+						}
+						break;
+					case RE_BUFFR:
+						if (AB_size() < lenMinB && myFile.available() > 0) {
+							AB_writeFrom(myFile, prefAmt);
+						} else {
+							play_state = BUF_PLAY;
+  						TIMSK2 |= (1 << OCIE2A); // Start output
+							isPlaying = true;
+						}
+						break;
+					case PLY_ONLY:
+						if (AB_size() <= 0) {
+							TIMSK2 = 0; // Stop output
+							isPlaying = false;
+							quitPlaying = true;
+						}
+						break;
+				}
+				// Polling the play button
         if (quitPlaying) {
           Serial.print("Press again to quit!");
           isPlaying = !isPressed(PLAY); //stays true until released
@@ -249,11 +385,9 @@ void loop() {
           Serial.print("playing...");
           quitPlaying = isPressed(PLAY); //stays true until pressed
         }
-      }
-
-      //Timer2.stop();
-			TIMSK2 = 0x0;
-			isPlaying = false;
+			}
+					
+			TIMSK2 = 0x0; //Timer2.stop();
       digitalWrite(ActiveLED, LOW); // PlayLED off
 
     } else {
@@ -276,7 +410,7 @@ void loop() {
 
       while (isRecording) {
 
-				// Writing to SD card from buffer! <<< !!!?
+				// Writing to SD card from AUDIO_BUFFER! <<< !!!?
 
         if (quitRecord) {
           Serial.print("Press again to quit!");
