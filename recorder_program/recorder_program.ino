@@ -28,7 +28,6 @@
 #include <ILI_SdSpi.h>
 #include <ILI_SdFatConfig.h>
 SdFat SD;
-#include <avr/pgmspace.h>
 
 
 
@@ -128,14 +127,33 @@ SdFile myFile;
 // Intermediate AUDIO_BUFFER, mitigating SD and Timer disparity
 #define MiddleBufferSize 32
 unsigned char MIDDLE_BUFFER[MiddleBufferSize]; 
-unsigned char msample = 0;	// pass ot cyclical buffer read
+unsigned char msample = 5;	// pass ot cyclical buffer read
 int i = 0;					// used for counts
-const char wavHeader[] PROGMEM = { 		// note: little endian...
-	'R','I','F','F', 0xFF,0x0F, 'W','A','V','E', // RIFF (filesize) WAVE
-	'f','m','t',' ', 0x0F,0x00, 0x01,	// fmt  (chunksize) (tag)
-		0x01, 0x40,0x9C, 0x40,0x9C, 	// (channels) (samp/s) (av. bps)
-		0x01, 0x08,0x00,				// (blockalign) (bpsample)
-	'd','a','t','a', 0xED,0x0F			// data (chunksize)
+const char wavHeader[] = { 	
+	0x52,0x49,0x46,0x46,0xa8,0xeb,0xc2,0x06,
+	0x57,0x41,0x56,0x45,0x66,0x6d,0x74,0x20,
+	0x10,0x00,0x00,0x00,0x01,0x00,0x01,0x00,
+	0x12,0x7a,0x00,0x00,0x12,0x7a,0x00,0x00,
+	0x01,0x00,0x08,0x00,0x4c,0x49,0x53,0x54,
+	0x40,0x00,0x00,0x00,0x49,0x4e,0x46,0x4f,
+	0x49,0x4e,0x41,0x4d,0x06,0x00,0x00,0x00,
+	0x56,0x6f,0x69,0x63,0x65,0x00,0x49,0x41,
+	0x52,0x54,0x18,0x00,0x00,0x00,0x44,0x69,
+	0x67,0x69,0x74,0x61,0x6c,0x20,0x52,0x65,
+	0x63,0x6f,0x72,0x64,0x65,0x72,0x20,0x47,
+	0x72,0x6f,0x75,0x70,0x00,0x00,0x49,0x43,
+	0x52,0x44,0x06,0x00,0x00,0x00,0x32,0x30,
+	0x31,0x35,0x00,0x00,0x64,0x61,0x74,0x61,
+	0x3c,0xeb,0xc2,0x06,0x80,0x80,0x80,0x80,
+	0x7f,0x80,0x7f,0x80,0x7f,0x80,0x80,0x7f,
+	0x80,0x7f,0x80,0x80,0x7f,0x80,0x80,0x80,
+	0x7f,0x80,0x7f,0x80,0x7f,0x80,0x7f,0x80,
+	0x7f,0x80,0x7f,0x80,0x7f,0x80,0x80,0x7f,
+	0x80,0x7f,0x80,0x7f,0x80,0x7f,0x80,0x80,
+	0x7f,0x80,0x7f,0x7f,0x80,0x7f,0x80,0x80,
+	0x7f,0x80,0x7f,0x80,0x80,0x7f,0x80,0x7f,
+	0x80,0x80,0x80,0x80,0x80,0x7f,0x80,0x7f,
+	0x80,0x7f,0x80,0x80,0x7f,0x80,0x7f,0x80
 };
 
 // Initialize SdFatLib card via shield
@@ -179,22 +197,17 @@ void playALittle() {
 }
 
 // Create WAV header/format/data begin chunks
-void recordPrep() {
-	for (i=0; i<31; i++) myFile.write(wavHeader[i]);
-}
+void recordPrep() { myFile.write(&wavHeader, 184); }
 
 // loop AUDIO_BUFFER -> MIDDLE_BUFFER, MIDDLE_BUFFER -> SD card
 void recordALittle() {
 	for (i=0; i<MiddleBufferSize; i++) {
 		if (!readBuffer(&msample)) break;
-		myFile.write(msample);
+		MIDDLE_BUFFER[i] = msample;
 	}
-//	Serial.println(msample);
-//	myFile.write(&MIDDLE_BUFFER, i);
-//	myFile.sync();
+	myFile.write(&MIDDLE_BUFFER, i);
+	//myFile.sync();
 }
-
-
 
 ////////////////////////////////////////////////////////////////////////
 
@@ -212,6 +225,7 @@ unsigned char sample = 0;	// used for readBuffer
 #ifndef sbi
 #define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
 #endif
+#define bit_is_set(sfr, bit) (_SFR_BYTE(sfr) & _BV(bit))
 
 // Set up playing/recording timers 2/1
 //  Use compare match registers for 40khz increments
@@ -227,7 +241,8 @@ void initAudio() {
 	TCNT2  = 0;		//initialize counter value to 0
 	//OCR2A = 49;		// = (16*10^6) / (40000*8) - 1 (must be <256)
 	//OCR2A = 180;	// = (16*10^6) / (11025*8) - 1 (must be <256)
-	OCR2A = 47;
+	//OCR2A = 47;     // works perfectly for 40k sampled files
+	OCR2A = 63;
 	TCCR2A |= (1 << WGM21);	// turn on CTC mode
 	TCCR2B |= (1 << CS21);	// Set CS21 bit for 8 prescaler
 
@@ -248,8 +263,8 @@ void initAudio() {
 	cbi(ADCSRA, ADPS1);	// ADC clock is now 1MHz, max recommended...
 	cbi(ADCSRA, ADPS0);
 	ADMUX = 0;
-	ADMUX |= (1 << REFS0);	// Use default reference of 5V
-	ADMUX |= (MicrophonePin & 0x07); // Select ADC input!
+	ADMUX |= (1 << REFS0) | (1 << REFS1);	// Use internal ref of 1.1V
+	ADMUX |= (MicrophonePin & 0x07); 		// Select ADC input!
 	
 	sei();//enable interrupts
 }
@@ -292,15 +307,16 @@ int isampl = 0;
 // RECORDING: AUDIO INPUT ISR
 ISR(TIMER1_COMPA_vect) {
 	if ((tail ^ head) != 0x80) {
-		sbi(PORTD, 3); //DERPDERPDERPEDEPR
-		//while ((ADCSRA & (1 << ADSC)) != 0); // get result of last conv
-		//sample = (ADCH << 8) | ADCL;
+		digitalWrite(3, HIGH); //DERPDERPDERPEDEPR
+		while (bit_is_set(ADCSRA, ADSC)); // get result of last conv
+		sample = (ADCL >> 2);
+		sample |= (ADCH << 6);
+		AUDIO_BUFFER[(head & 0x7F)] = sample;
+		head++;
 		//isampl = analogRead(MicrophonePin); // SLOW FUNCTION!
-		//AUDIO_BUFFER[(head & 0x7F)] = sample;
 		//myFile.write(isampl >> 2); // SLOW FUNCTION
-		//head++;
-		//sbi(ADCSRA, ADSC); // start conversion
-		cbi(PORTD, 3); //DERPDERPDERPEDEPR
+		sbi(ADCSRA, ADSC); // start conversion
+		digitalWrite(3, LOW); //DERPDERPDERPEDEPR
 	} 
 }
 
@@ -391,9 +407,10 @@ void loop() {
 		digitalWrite(ActiveLED, HIGH);
 		recordPrep();
 		startRecord();
-		delay(2); 						// wait for buffer to fill half-way!
+		//delay(2); 					// wait for buffer to fill half-way!
 		while(!wasPressed(RECORD)) {
 			recordALittle();
+			//Serial.println(sample); // DEPREDEPRPDEPREP
 			readButtons();
 		}
 		stopRecord();
