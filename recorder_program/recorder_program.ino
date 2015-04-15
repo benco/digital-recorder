@@ -28,6 +28,7 @@
 #include <ILI_SdSpi.h>
 #include <ILI_SdFatConfig.h>
 SdFat SD;
+#include <avr/pgmspace.h>
 
 
 
@@ -35,11 +36,9 @@ SdFat SD;
 // B U T T O N S ///////////////////////////////////////////////////////
 
 // Button pins: used analog to free PORTD, if DAC output used
-#define PlayButton A0
-#define RecordButton A1
-#define DeleteButton A2
-// Analog input threshold
-#define ButtonLow 90
+#define PlayButton 8
+#define RecordButton 7
+#define DeleteButton 6
 // Debouncing variables/conditions
 volatile int ButtonBuffer = 0;
 #define PLAY 0xFFFF		// 0b11 (3)
@@ -47,13 +46,19 @@ volatile int ButtonBuffer = 0;
 #define DELETE 0x5555	// 0b01 (1)
 #define NONE 0			// 0b00 (0)
 
+void initButtons() {
+	pinMode(PlayButton, INPUT);
+	pinMode(RecordButton, INPUT);
+	pinMode(DeleteButton, INPUT);
+}
+
 // Debounces by shifting the button # into a volatile
 //  array, which is checked later.
 void readButtons() {
 	int latestButton = 0;
-	if (analogRead(PlayButton) < ButtonLow) latestButton = 3; 
-	else if (analogRead(RecordButton) < ButtonLow) latestButton = 2;
-	else if (analogRead(DeleteButton) < ButtonLow) latestButton = 1;
+	if (!digitalRead(PlayButton)) latestButton = 3; 
+	else if (!digitalRead(RecordButton)) latestButton = 2;
+	else if (!digitalRead(DeleteButton)) latestButton = 1;
 	// Shift in 2-bit binary value for latest button
 	ButtonBuffer = (ButtonBuffer << 2) | latestButton;
 }
@@ -116,6 +121,86 @@ bool readBuffer(unsigned char *sample) {
 
 
 
+// M E M O R Y /////////////////////////////////////////////////////////
+
+#define SD_SPI_SPEED SPI_HALF_SPEED
+SdFile myFile;
+// Intermediate AUDIO_BUFFER, mitigating SD and Timer disparity
+#define MiddleBufferSize 32
+unsigned char MIDDLE_BUFFER[MiddleBufferSize]; 
+unsigned char msample = 0;	// pass ot cyclical buffer read
+int i = 0;					// used for counts
+const char wavHeader[] PROGMEM = { 		// note: little endian...
+	'R','I','F','F', 0xFF,0x0F, 'W','A','V','E', // RIFF (filesize) WAVE
+	'f','m','t',' ', 0x0F,0x00, 0x01,	// fmt  (chunksize) (tag)
+		0x01, 0x40,0x9C, 0x40,0x9C, 	// (channels) (samp/s) (av. bps)
+		0x01, 0x08,0x00,				// (blockalign) (bpsample)
+	'd','a','t','a', 0xED,0x0F			// data (chunksize)
+};
+
+// Initialize SdFatLib card via shield
+bool initMem() { 
+	pinMode(4, OUTPUT);
+	bool success = SD.begin(4, SD_SPI_SPEED);
+	if (success) Serial.println("SD INIT: success");
+	else Serial.println("SD INIT: failed");
+	return success;
+}
+
+// Open a file on the SD card, returns success
+bool openFile(char fn[], bool create) {
+	// if creating, only want to create if no file exists
+	uint8_t flags = O_RDWR | (create ? O_CREAT | O_EXCL : 0);
+	if (!myFile.open(fn, flags)) {
+		Serial.println("OPEN FILE: failed");
+		return false;
+	}
+	return true;
+}
+
+// Close current file
+void closeFile(char fn[]) { myFile.close(); }
+
+// Delete the file!!!
+void deleteFile(char fn[]) { myFile.remove(); }
+
+// Load AUDIO_BUFFER half-way! 4 x 16 = 128 / 2
+void playPrep() { for (int i=0; i<4; i++) playALittle(); }
+
+// SD card -> MIDDLE_BUFFER, loop MIDDLE_BUFFER -> AUDIO_BUFFER
+void playALittle() {
+	myFile.read(&MIDDLE_BUFFER, MiddleBufferSize);	// 2436c
+	for (i=0; i<MiddleBufferSize; i++) {
+		if (!writeBuffer(MIDDLE_BUFFER[i])) {
+			myFile.seekCur(i - MiddleBufferSize);
+			return;
+		}
+	}
+}
+
+// Create WAV header/format/data begin chunks
+void recordPrep() {
+	for (i=0; i<31; i++) myFile.write(wavHeader[i]);
+}
+
+// loop AUDIO_BUFFER -> MIDDLE_BUFFER, MIDDLE_BUFFER -> SD card
+void recordALittle() {
+	for (i=0; i<MiddleBufferSize; i++) {
+		if (!readBuffer(&msample)) break;
+		myFile.write(msample);
+	}
+//	Serial.println(msample);
+//	myFile.write(&MIDDLE_BUFFER, i);
+//	myFile.sync();
+}
+
+
+
+////////////////////////////////////////////////////////////////////////
+
+
+
+
 // A U D I O ///////////////////////////////////////////////////////////
 
 #define SpeakerPin 5
@@ -159,11 +244,12 @@ void initAudio() {
 	TCCR1B |= (1 << CS11);	// Set CS11 bit for 8 prescaler
 
 	// RECORDING: ADC SETTINGS
-	//ADMUX = 0;
-	//ADMUX |= (1 << REFS0);	// Use default reference of 5V
 	sbi(ADCSRA, ADPS2);	// these 3 bit instructions set prescale to 16
 	cbi(ADCSRA, ADPS1);	// ADC clock is now 1MHz, max recommended...
 	cbi(ADCSRA, ADPS0);
+	ADMUX = 0;
+	ADMUX |= (1 << REFS0);	// Use default reference of 5V
+	ADMUX |= (MicrophonePin & 0x07); // Select ADC input!
 	
 	sei();//enable interrupts
 }
@@ -183,20 +269,15 @@ void stopPlay() {
 }
 
 // Starts recording timer! enable timer1 compare interrupt
-void startRecord() { TIMSK1 |= (1 << OCIE1A); }
+void startRecord() { 
+	TIMSK1 |= (1 << OCIE1A); 
+}
 
 // Stops recording timer!
 void stopRecord() { TIMSK1 = 0x0; }
 
 bool DERP = true;
 // PLAYING: AUDIO OUTPUT ISR
-/*
-ISR(TIMER1_COMPA_vect) {
-	if (readBuffer(&sample)) analogWrite(SpeakerPin, sample);
-	else digitalWrite(7, DERP); DERP = !DERP; // DERP!DERP!DERP!DERP!DERP!DERP!
-}
-*/
-// PLAYING: FASTER? ISR
 ISR(TIMER2_COMPA_vect) {
 	if (tail != head) {
 		//analogWrite(SpeakerPin, sample); // SLOW FUNCTION
@@ -206,94 +287,24 @@ ISR(TIMER2_COMPA_vect) {
 		tail++;
 	}
 }
+
+int isampl = 0;
 // RECORDING: AUDIO INPUT ISR
 ISR(TIMER1_COMPA_vect) {
 	if ((tail ^ head) != 0x80) {
-		AUDIO_BUFFER[(head & 0x7F)] = analogRead(MicrophonePin);
-		head++;
+		sbi(PORTD, 3); //DERPDERPDERPEDEPR
+		//while ((ADCSRA & (1 << ADSC)) != 0); // get result of last conv
+		//sample = (ADCH << 8) | ADCL;
+		//isampl = analogRead(MicrophonePin); // SLOW FUNCTION!
+		//AUDIO_BUFFER[(head & 0x7F)] = sample;
+		//myFile.write(isampl >> 2); // SLOW FUNCTION
+		//head++;
+		//sbi(ADCSRA, ADSC); // start conversion
+		cbi(PORTD, 3); //DERPDERPDERPEDEPR
 	} 
 }
 
 ////////////////////////////////////////////////////////////////////////
-
-
-
-// M E M O R Y /////////////////////////////////////////////////////////
-
-#define SD_SPI_SPEED SPI_HALF_SPEED
-SdFile myFile;
-// Intermediate AUDIO_BUFFER, mitigating SD and Timer disparity
-#define MiddleBufferSize 32
-unsigned char MIDDLE_BUFFER[MiddleBufferSize]; 
-
-// Initialize SdFatLib card via shield
-bool initMem() { 
-	pinMode(4, OUTPUT);
-	bool success = SD.begin(4, SD_SPI_SPEED);
-	if (success) Serial.println("SD INIT: success");
-	else Serial.println("SD INIT: failed");
-	return success;
-}
-
-// Open a file on the SD card, returns success
-bool openFile(char fn[], bool create) {
-	// if creating, only want to create if no file exists
-	uint8_t flags = O_READ | O_WRITE | (create ? O_CREAT | O_EXCL : 0);
-	if (!myFile.open(fn, flags)) {
-		Serial.println("OPEN FILE: failed");
-		return false;
-	}
-	return true;
-}
-
-// Close current file
-void closeFile(char fn[]) { myFile.close(); }
-
-// Delete the file!!!
-void deleteFile(char fn[]) { myFile.remove(); }
-
-// Load AUDIO_BUFFER half-way! 4 x 16 = 128 / 2
-void playPrep() { for (int i=0; i<4; i++) playALittle(); }
-
-// SD card -> MIDDLE_BUFFER, loop MIDDLE_BUFFER -> AUDIO_BUFFER
-void playALittle() {
-	myFile.read(&MIDDLE_BUFFER, MiddleBufferSize);	// 2436
-	/* * /
-	writeBuffer(MIDDLE_BUFFER[0]);
-	writeBuffer(MIDDLE_BUFFER[1]);
-	writeBuffer(MIDDLE_BUFFER[2]);
-	writeBuffer(MIDDLE_BUFFER[3]);
-	writeBuffer(MIDDLE_BUFFER[4]);
-	writeBuffer(MIDDLE_BUFFER[5]);
-	writeBuffer(MIDDLE_BUFFER[6]);
-	writeBuffer(MIDDLE_BUFFER[7]);
-	writeBuffer(MIDDLE_BUFFER[8]);
-	writeBuffer(MIDDLE_BUFFER[9]);
-	writeBuffer(MIDDLE_BUFFER[10]);
-	writeBuffer(MIDDLE_BUFFER[11]);
-	writeBuffer(MIDDLE_BUFFER[12]);
-	writeBuffer(MIDDLE_BUFFER[13]);
-	writeBuffer(MIDDLE_BUFFER[14]);
-	writeBuffer(MIDDLE_BUFFER[15]);
-	/ * */
-	for (int i=0; i<MiddleBufferSize; i++) {		// 3
-		if (!writeBuffer(MIDDLE_BUFFER[i])) {
-			myFile.seekCur(i - MiddleBufferSize);
-			return;
-			//digitalWrite(7, DERP); DERP = !DERP; // DEPREDPERPEDPERP
-			//Serial.println(i);
-			//delayMicroseconds(1);
-		}	// 3
-	}												// x16 = 144
-	/* */
-}											// TOTAL = 2580c
-
-// loop AUDIO_BUFFER -> MIDDLE_BUFFER, MIDDLE_BUFFER -> SD card
-void recordALittle() { Serial.println("Make a recordALittle method!"); }
-
-
-////////////////////////////////////////////////////////////////////////
-
 
 
 
@@ -315,7 +326,7 @@ void angryBlink(int pin, int num_blinks, bool end_state) {
 	for (int i=0; i<(2*num_blinks); i++) {
 		end_state = !end_state;
 		digitalWrite(pin, end_state);
-		delay(300);
+		delay(30000);
 	}
 }
 
@@ -324,17 +335,19 @@ void angryBlink(int pin, int num_blinks, bool end_state) {
 
 
 
-//char fileName[] = "recording.mp3";
+char fileName[] = "voice.wav";
 //char fileName[] = "88mph.wav";
 //char fileName[] = "cda.wav";
-char fileName[] = "koko40.wav";
+//char fileName[] = "koko40.wav";
 
 void setup() {
 	Serial.begin(9600);
 	Serial.println("SERIAL CONNECTION ESTABLISHED");
 	initAudio();
 	while (!initMem()) angryBlink(FileLED, 3, LOW);
-	pinMode(7, OUTPUT); // DERPDERPDERPDEPREDPRPEDPRER
+	pinMode(3, OUTPUT); // DERPDERPDERPDEPREDPRPEDPRER
+	pinMode(4, OUTPUT); // DERPDERPDERPDEPREDPRPEDPRER
+	initButtons();
 	initLEDs();
 	if (openFile(fileName, false)) {
 		closeFile(fileName);
@@ -369,13 +382,14 @@ void loop() {
 		break;
 
 	case RECORD:
-		if(openFile(fileName, true)) {
+		if(!openFile(fileName, true)) {
 			closeFile(fileName);
 			Serial.println("ALREADY HAVE FILE");
 			angryBlink(FileLED, 3, HIGH);
 			break;
 		}
 		digitalWrite(ActiveLED, HIGH);
+		recordPrep();
 		startRecord();
 		delay(2); 						// wait for buffer to fill half-way!
 		while(!wasPressed(RECORD)) {
@@ -383,7 +397,9 @@ void loop() {
 			readButtons();
 		}
 		stopRecord();
+		closeFile(fileName);
 		digitalWrite(ActiveLED, LOW);
+		digitalWrite(FileLED, HIGH);
 		break;
 
 	case DELETE:
